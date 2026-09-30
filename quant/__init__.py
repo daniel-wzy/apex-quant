@@ -1,0 +1,1 @@
+# quant/ — Quantitative pipeline package

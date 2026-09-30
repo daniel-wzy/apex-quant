@@ -1,0 +1,15 @@
+__pycache__/
+*.pyc
+*.pkl
+*.parquet
+*.joblib
+.env
+venv/
+data/live/
+*.jsonl
+.DS_Store
+data/synthetic/ohlcv_sample.csv
+data/synthetic/trades_sample.csv
+data/synthetic/sim_out.csv
+quant/data/
+quant/models/
