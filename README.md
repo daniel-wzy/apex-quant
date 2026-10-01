@@ -1,4 +1,6 @@
-# Buffett Quant System
+# APEX Quant
+
+> The live trading bot based on this system is nicknamed **Buffett**.
 
 > Autonomous equity trading system: technical indicator confluence → XGBoost meta-labeling gate → vol-targeted execution.
 
@@ -229,7 +231,7 @@ Operational details: [docs/risk-and-ops.md](docs/risk-and-ops.md)
 ## Project Structure
 
 ```
-buffett-showcase/
+apex-quant/
 ├── README.md
 ├── Makefile
 ├── requirements.txt
