@@ -22,14 +22,16 @@ that forward labels computed over a 20-bar horizon were overlapping — the last
 training bars had labels that "looked into" the validation window.
 
 **Root cause**  
-The labeling function applied a rolling forward window over the entire dataset
-before splitting. Bars near the train/val boundary had labels that incorporated
-price data from the validation period.
+The labeling function applied a rolling forward window (20-bar horizon: +15% TP
+before −5% stop) over the entire dataset before splitting. Bars near the
+train/val boundary had labels that incorporated price data from the validation
+period.
 
 **Fix**  
 - Implemented purged/embargoed walk-forward CV (see `quant/train_walkforward.py`).
-- An embargo of 5 bars (matching the maximum forward-label horizon) is removed
-  from the end of each training set before fitting.
+- An embargo of ≥ 20 bars (≥ the label horizon) is removed from the end of
+  each training set before fitting.
+- Walk-forward: 36 folds, 2023-07 → 2026-06.
 - Labels are recomputed per fold using only data available in the training window.
 
 **Impact on metrics**  
@@ -92,7 +94,10 @@ excluded — because they weren't observed. Classic survivorship bias.
 - Expanded the universe to include names that were not pre-selected.
 - Added a per-symbol review step: each symbol is evaluated individually using
   the same Evaluator metrics (expectancy, profit factor, CVaR).
-- Symbols with negative expectancy or wide CI crossing zero are pruned.
+- Symbols are excluded only when the entire 95% CI is negative on a real
+  backtest sample, or for data/liquidity issues.
+- The per-symbol review tool has a validation requirement: when applied to the
+  full universe, the aggregate must reproduce the baseline.
 - The pruned universe is frozen at a versioned checkpoint.
 
 **Impact on metrics**  
@@ -110,13 +115,14 @@ significant losing streaks visible in the equity curve.
 **How it was caught**  
 Eyeballed the equity curve against the reported drawdown number — they
 didn't match. Traced the drawdown computation and found the denominator
-was using a hardcoded "initial capital" of 10,000 instead of the actual
-peak equity.
+was using a hidden $100k base constant for a ~$20k account, understating
+drawdown approximately 4×.
 
 **Root cause**  
 The legacy drawdown function computed `(equity − peak) / initial_capital`
-instead of `(equity − peak) / peak`. With a large initial_capital constant,
-the denominator inflated, shrinking the reported drawdown percentage.
+instead of `(equity − peak) / peak`. With a large base constant relative
+to the actual account size, the denominator inflated, shrinking the reported
+drawdown percentage approximately 4×.
 
 **Fix**  
 Rewrote `_max_drawdown_pct()` in `quant/evaluator.py` to use the running
@@ -134,8 +140,7 @@ to industry-standard reporting.
 
 **Symptom**  
 The aggregate backtest looked good. Per-symbol analysis revealed that the
-vast majority of cumulative profit came from 2–3 symbols; the rest were
-break-even or losing.
+worst-5% of trades came from 5 micro-caps; the rest were break-even or losing.
 
 **How it was caught**  
 Added a per-symbol statistics tool (`run_bucket_breakdown.py`) that reports
@@ -150,9 +155,9 @@ changes in the "hero" names' behavior.
 
 **Fix**  
 - Per-symbol review is now a required step before any model is promoted.
-- Symbols failing per-symbol review are pruned from the universe even if
-  they improve aggregate metrics.
-- The pruned universe (54 symbols) is treated as a frozen baseline.
+- Of the 5 micro-caps: 3 had no statistical edge (entire CI negative) and were
+  pruned; 2 with real edge were kept.
+- The pruned universe is treated as a frozen baseline.
 
 **Impact on metrics**  
 Aggregate expectancy and profit factor declined but became more robust.
@@ -164,10 +169,9 @@ the risk that aggregate metrics mask a few outliers.
 ## Bug 6: Disabled Safety Floor
 
 **Symptom**  
-The portfolio floor mechanism existed in the config but was not being
-evaluated against mark-to-market value. It was checked against cost-basis
-PnL instead — meaning an unrealized loss of 40% in open positions would
-not trigger the floor.
+The portfolio floor was disabled in code — the mechanism existed in config but
+was not being evaluated. It was checked against cost-basis entry price rather
+than MTM equity.
 
 **How it was caught**  
 Code review of the floor check logic. Found that it read `pnl_realized`

@@ -114,14 +114,16 @@ learn `time_of_day` as a timeframe proxy, reducing signal quality.
 2. Label module applies forward-looking TP/stop rules to produce `label_tp15`
    (15% TP, 5% stop, 20-bar horizon) — the primary entry label
 3. Only bars where ≥1 buy signal is active are used as training candidates
-4. Walk-forward CV (6m train / 1m val / 1m step, 5-bar embargo) validates OOF AUC
+4. Walk-forward CV (36 folds, 2023-07 → 2026-06, ≥20-bar embargo) validates OOF AUC
 5. Final model trained on all data, saved to `quant/models/`
 
 **Calibration:** Raw XGBoost probabilities are not calibrated by default. The
 pipeline adds an isotonic regression calibration layer (`calibrator_utils.py`).
 This step is non-optional: without it, "threshold=0.75" has no stable meaning —
 the same raw score means different things across different trees. The calibrated
-probability is what the live path thresholds against `ENTRY_THRESHOLD = 0.75`.
+probability is what the live path thresholds against `ENTRY_THRESHOLD`. The
+validated configuration uses τ = 0.50; the live bot currently runs a stricter
+threshold of τ = 0.75.
 
 ---
 
@@ -134,7 +136,7 @@ shares = (risk_pct × notional) / (entry − stop)
 shares = min(shares, max_position_usd / entry)
 ```
 
-With `risk_pct = 0.75%` of notional, each trade risks approximately the same
+With `risk_pct = 0.60%` of notional (illustrative), each trade risks approximately the same
 dollar amount regardless of price or stop distance. Large-stop trades get
 smaller positions; tight-stop trades get larger ones.
 
@@ -167,11 +169,8 @@ The watchdog's only dependencies are:
 - A Discord webhook URL in `.env`
 - Standard library + `curl`
 
-**Dead-man's switch pattern:** The trading process pings an external
-health-check service (e.g., healthchecks.io) on every successful run. If the
-ping stops, the external service alerts after a grace period. The watchdog
-handles the *local* alert (machine is up, bot is silent). Two independent
-alert paths: one requires the machine to be up, one does not.
+The watchdog is the sole alert path for local failures (machine is up, bot is
+silent). Alerts are delivered via raw webhook.
 
 ---
 
@@ -195,7 +194,7 @@ OHLCV Data (Moomoo OpenD, multi-timeframe)
          ▼
   XGBoost Gate
   (per-timeframe classifier, isotonic calibration)
-  P(profitable) ≥ 0.75 to pass
+  P(profitable) ≥ 0.50 to pass (live bot: ≥ 0.75)
          │
          ▼
   Vol-Targeted Sizing

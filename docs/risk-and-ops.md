@@ -15,6 +15,12 @@ If `MTM < floor_usd`, all trading activity halts immediately.
 The floor is configured as a dollar amount, not a percentage. It represents
 the minimum acceptable portfolio value before human review is required.
 
+> **History note:** The floor was initially disabled in code. It was re-enabled
+> and then fully rebuilt from entry-price basis to mark-to-market. The current
+> implementation halts when equity is within a buffer of the floor and alerts;
+> the data-outage fail-safe (below) ensures a price-fetch failure never silently
+> bypasses this check.
+
 ### Data-Outage Fail-Safe
 
 If the live price for any open position cannot be fetched (API error, network
@@ -54,9 +60,8 @@ equivalent cron job on other systems). It shares no code, no imports, and
 no authentication with the trading process.
 
 **Motivation:** If the watchdog were part of the trading process, any failure
-that silences the trading process would also silence the watchdog. The whole
-point of a dead-man's switch is that it fires *because* the main process
-stopped. Coupling them defeats the purpose.
+that silences the trading process would also silence the watchdog. An independent
+local process with a raw webhook avoids that coupling.
 
 The watchdog's entire dependency graph:
 - Python standard library (`json`, `subprocess`, `datetime`, `zoneinfo`)
@@ -81,20 +86,12 @@ Once an alert is sent, the watchdog suppresses further alerts for 2 hours
 (configurable via `RETHROTTLE_MINUTES`). This prevents alert spam during
 extended outages — a single alert is sufficient to notify the operator.
 
-### Dead-Man's-Switch Pattern
+### Alert Pattern
 
-Two independent alert paths are used:
-
-1. **External (healthchecks.io or similar):** The trading process pings a URL
-   on every successful run. If the ping stops, the external service sends an
-   alert after a grace period. This fires even if the machine is down.
-
-2. **Local (watchdog):** Runs on the same machine, reads `positions.json`,
-   sends a Discord webhook alert if the bot has been silent for >45 min during
-   market hours. This fires when the machine is up but the bot is silent.
-
-Both paths are required. The external path covers machine failures; the local
-path catches bot crashes that don't take the machine down.
+The watchdog is the local alert path: it runs on the same machine, reads
+`positions.json`, and sends a raw webhook alert if the bot has been silent
+for >45 min during market hours. This covers the case where the machine is
+up but the bot is silent.
 
 ---
 
@@ -108,7 +105,7 @@ the AI provider expired. The agent could not run for approximately 8 days.
 **What happened:**
 - The bot stopped executing at the normal cadence.
 - The watchdog correctly detected the silence and sent alerts.
-- The external dead-man's switch also fired after its grace period.
+- The watchdog correctly alerted on the outage.
 - No trades were executed during the outage.
 
 **How the shadow window was handled:**
@@ -166,5 +163,4 @@ The same principle applies to backtest results: correction notes are added to
 | Per-position cap | Position USD > max | Size down |
 | Stop loss | Price ≤ stop_price | Exit at next open |
 | Take profit | Price ≥ TP (15%) | Exit at next open |
-| Watchdog | Bot silent >45 min | Discord alert |
-| External dead-man | Ping missed | External alert (machine-independent) |
+| Watchdog | Bot silent >45 min | Raw webhook alert |

@@ -11,13 +11,15 @@ flowchart LR
     A["OHLCV Data\n(multi-timeframe:\n30m, 1h, 4h, daily)"]
     B["Indicator Layer\n(N indicators,\nboolean signals)"]
     C["Confluence Scoring\n+ Combo Gate"]
-    D["XGBoost Gate\n(calibrated P(profitable)\n≥ 0.75 to pass)"]
+    D["XGBoost Gate\n(calibrated P(profitable)\n≥ 0.50 to pass)"]
     E["Vol-Targeted Sizing\nrisk_pct × notional\n÷ (entry − stop)"]
     F["Position Manager\n(5-slot cap, T+1 entry)"]
     G["Risk Controls\n/ Floor Check\n(MTM + fail-safe)"]
 
     A --> B --> C --> D --> E --> F --> G
 ```
+
+> The validated configuration uses **τ = 0.50**. The live bot currently runs a stricter threshold of **τ = 0.75**.
 
 ---
 
@@ -40,17 +42,17 @@ things were wrong with the measurement.
   true probabilities. "τ = 0.75" meant nothing without calibration. Added
   isotonic regression calibration; the threshold now means what it says.
 - **Survivorship bias:** The initial universe was hand-picked from names that had
-  "worked." Expanded universe + per-symbol review + pruning of losers corrected
-  the inflated baseline.
-- **Drawdown diluted ~4×:** The drawdown denominator used a hardcoded initial
-  capital constant instead of the running peak. Fixed to mark-to-market.
-  Reported drawdown grew ~4× to its correct value.
-- **Tail concentration:** Most P&L came from 2–3 names. The aggregate looked
-  fine; per-symbol review exposed the concentration. Pruned the losers; the
-  aggregate became more honest.
-- **Disabled safety floor:** The portfolio floor was evaluated against realized
-  PnL, not mark-to-market. An unrealized 40% drawdown in open positions would
-  not have triggered it. Rebuilt as MTM with a data-outage fail-safe.
+  "worked." Partially addressed by adding non-surviving names to the universe;
+  remains a known limitation (universe chosen with some hindsight).
+- **Drawdown diluted ~4×:** The evaluator computed drawdown on a hidden $100k
+  base for a ~$20k account, understating drawdown approximately 4×. Fixed to
+  portfolio-basis mark-to-market on real equity.
+- **Tail concentration:** Worst-5% of trades came from 5 micro-caps; 3 had no
+  statistical edge (entire CI negative) and were pruned; 2 with real edge were
+  kept.
+- **Disabled safety floor:** The portfolio floor was disabled in code; re-enabled;
+  then rebuilt from entry-price to mark-to-market, with a data-outage fail-safe
+  that halts when equity is within a buffer of the floor and alerts otherwise.
 - **Partial-exit logging bug:** A quantity-weighting error fabricated losses on
   partial exits. Corrected with an auditable correction file — the original log
   is preserved. History was not rewritten.
@@ -70,12 +72,10 @@ Full postmortems for each bug: [docs/validation.md](docs/validation.md)
 Random splits on financial time series leak the future. This system uses
 purged/embargoed walk-forward CV throughout:
 
-- **Train window:** 6 months
-- **Validation window:** 1 month (out-of-sample)
-- **Step:** 1 month
-- **Embargo:** 5 bars (matching the maximum forward-label horizon) are removed
-  from the end of each training set. This prevents labels computed over
-  overlapping forward windows from contaminating the validation fold.
+- **Forward labels:** 20 bars (+15% TP before −5% stop within 20 bars)
+- **Embargo:** ≥ 20 bars (≥ label horizon), removed from the end of each
+  training set to prevent label overlap with the validation window.
+- **Walk-forward:** 36 folds, 2023-07 → 2026-06
 
 Result: no bar's label ever reflects price data from the validation period.
 
@@ -83,8 +83,8 @@ Result: no bar's label ever reflects price data from the validation period.
 
 XGBoost produces well-ordered probabilities but uncalibrated scales. The
 pipeline adds isotonic regression calibration on a held-out set. A reliability
-diagram confirms that P(profitable | model score ≥ τ) matches the actual
-positive rate within 5 percentage points across threshold buckets.
+diagram confirms that P(profitable | model score ≥ τ) is well-aligned
+with the actual positive rate across threshold buckets.
 
 ### Trade-Level Evaluator with Bootstrap CI
 
@@ -108,25 +108,25 @@ Every trade includes round-trip costs from a realistic model:
 - **Market impact:** Flat per-share amount, tier-scaled
 
 Costs are tracked explicitly in every Scorecard (`total_costs_paid_pct`).
-There is no "assume zero costs" option — this was a deliberate design choice
-after finding that costs reduced expectancy by ~0.2R in early tests.
+There is no "assume zero costs" option — this was a deliberate design choice.
 
 ### 2022 Bear Market Stress Test
 
-The out-of-sample period includes 2022 (S&P −19%, Nasdaq −33%). Results:
-positive expectancy was maintained. The per-symbol review found that several
-names which looked good in 2020–2021 became consistent losers in 2022; they
-were pruned from the universe following this discovery.
+A separate out-of-time stress test was conducted against 2022 data (S&P −19%,
+Nasdaq −33%). The model never trained on 2022 data — the out-of-fold period
+covers 2023–2026. Gated result: positive expectancy (~0.6R/trade) with drawdown
+within limits.
 
 ### Per-Symbol Review
 
 Every symbol in the universe is evaluated independently using the same Evaluator
-metrics. Any symbol with:
-- Negative expectancy in its per-symbol backtest, OR
-- 95% CI lower bound ≤ 0, OR
-- Fewer than 10 trades (insufficient sample)
+metrics. A symbol is excluded only when:
+- The entire 95% CI is negative on a real backtest sample, OR
+- Data or liquidity issues make reliable evaluation impossible
 
-…is removed from the universe. This check catches what aggregate statistics hide.
+The per-symbol review tool has a validation requirement: when applied to the full
+universe, the aggregate result must reproduce the baseline. This guards against
+over-pruning. This check catches what aggregate statistics hide.
 
 ---
 
@@ -146,17 +146,19 @@ metrics. Any symbol with:
 These numbers reflect a pruned, survivorship-corrected universe with realistic
 costs, purged CV, and corrected drawdown calculation.
 
-### Live (Shadow Validation Window)
+### Live Results
 
-The system has been running in shadow mode (signals computed and logged but not
-all executed live due to operational constraints).
+**Shadow (paper) — validating τ = 0.50 config:**
+- Signals computed and logged in paper mode
+- Small sample so far; multi-month window ongoing
+- Not yet statistically meaningful
 
-**Honestly stated:**
-- The shadow window has ~16 live-executed trades at time of writing (small sample)
-- The indicator-only era (before the XGBoost gate) was roughly break-even
-- The quant-gated period is positive
-- The edge is promising but unproven at scale
-- An 8-day auth expiry outage interrupted the shadow period; that gap is excluded
+**Live trades:**
+- Indicator-only era (before XGBoost gate): lost money
+- Overall live realized P&L: roughly break-even after correcting a logging bug
+- Quant-gated era: positive, but only ~16 trades with most gains from 3 trades —
+  **not yet statistically meaningful**
+- An 8-day auth expiry outage interrupted the live period; that gap is excluded
 
 The live sample is too small to draw strong conclusions. Ongoing shadow
 validation continues.
@@ -165,7 +167,7 @@ validation continues.
 
 ## Risk & Operations
 
-**Vol-targeted sizing:** Each trade risks 0.75% of notional. Position size =
+**Vol-targeted sizing:** Each trade risks 0.60% of notional (illustrative). Position size =
 risk_usd / (entry − stop), capped at max position USD. Tight-stop trades get
 larger positions; wide-stop trades get smaller ones.
 
@@ -177,10 +179,9 @@ mark-to-market value, not cost basis. If any live price is unavailable (API
 error, auth expiry, network failure), the floor check assumes worst-case
 (stop price for all open positions) and halts trading regardless.
 
-**Watchdog:** An independent scheduled process (no shared code or auth with
-the bot) checks that the bot has run within the expected window during market
-hours. Alerts via raw Discord webhook. A second, external dead-man's-switch
-service covers the case where the machine itself is down.
+**Watchdog:** An independent local process (no shared code or auth with the bot)
+checks that the bot has run within the expected window during market hours. Alerts
+via raw webhook.
 
 Operational details: [docs/risk-and-ops.md](docs/risk-and-ops.md)
 
@@ -191,17 +192,16 @@ Operational details: [docs/risk-and-ops.md](docs/risk-and-ops.md)
 > **"A number that looks too good is a bug until proven otherwise."**  
 > The initial Sharpe >4 was a bug report, not a win.
 
-> **"Measurement bugs outnumbered strategy bugs 4:1."**  
+> **"Most bugs were in measurement and infrastructure, not strategy logic."**  
 > Four of the seven bugs were in the evaluator, CV, or reporting — not in the
 > strategy logic itself.
 
 > **"Fix the validator before you trust the result."**  
-> The unit test suite for the Evaluator was written before any strategy was
-> evaluated. Without a verified foundation, nothing else is meaningful.
+> Without a verified evaluator foundation, no metric is meaningful.
 
 > **"Fail safe, but never fail silent."**  
 > Every failure mode has an explicit handler. Missing prices → worst-case
-> assumption + halt. Auth expiry → dead-man's switch fires.
+> assumption + halt. Watchdog fires independently if the bot goes silent.
 
 > **"Per-symbol review catches what aggregate stats hide."**  
 > The aggregate backtest looked fine. The per-symbol breakdown showed 2–3 names
