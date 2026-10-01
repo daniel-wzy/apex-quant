@@ -49,9 +49,7 @@ things were wrong with the measurement.
 - **Drawdown diluted ~4×:** The evaluator computed drawdown on a hidden $100k
   base for a ~$20k account, understating drawdown approximately 4×. Fixed to
   portfolio-basis mark-to-market on real equity.
-- **Tail concentration:** Worst-5% of trades came from 5 micro-caps; 3 had no
-  statistical edge (entire CI negative) and were pruned; 2 with real edge were
-  kept.
+- **Tail concentration:** Worst-5% of trades came from 5 micro-caps. BW and EOSE had no statistical edge (CI not clearly positive; EOSE produced the 3 worst trades). ALOY showed positive edge but was pruned because its stop data was broken and risk sizing never engaged (thin OTC name). CIFR and BBAI were kept.
 - **Disabled safety floor:** The portfolio floor was disabled in code; re-enabled;
   then rebuilt from entry-price to mark-to-market, with a data-outage fail-safe
   that halts when equity is within a buffer of the floor and alerts otherwise.
@@ -158,8 +156,7 @@ costs, purged CV, and corrected drawdown calculation.
 **Live trades:**
 - Indicator-only era (before XGBoost gate): lost money
 - Overall live realized P&L: roughly break-even after correcting a logging bug
-- Quant-gated era: positive, but only ~16 trades with most gains from 3 trades —
-  **not yet statistically meaningful**
+- Quant-gated era: ~16 trades, ~44% win rate, net positive because winners were larger than losers — most of the gain came from 3 trades. Too small a sample to conclude much.
 - An 8-day auth expiry outage interrupted the live period; that gap is excluded
 
 The live sample is too small to draw strong conclusions. Ongoing shadow

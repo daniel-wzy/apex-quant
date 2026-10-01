@@ -155,8 +155,7 @@ changes in the "hero" names' behavior.
 
 **Fix**  
 - Per-symbol review is now a required step before any model is promoted.
-- Of the 5 micro-caps: 3 had no statistical edge (entire CI negative) and were
-  pruned; 2 with real edge were kept.
+- Of the 5 micro-caps: BW and EOSE had no statistical edge (CI not clearly positive; EOSE produced the 3 worst trades). ALOY showed positive edge but was pruned because its stop data was broken and risk sizing never engaged (thin OTC name). CIFR and BBAI were kept.
 - The pruned universe is treated as a frozen baseline.
 
 **Impact on metrics**  
